@@ -1,46 +1,72 @@
-import requests
+import logging
+from urllib.parse import urljoin
 from bs4 import BeautifulSoup
+from src.fetcher import WebFetcher
 
 
-class DataScraper:
+class ProductScraper:
+    """موتور استخراج اطلاعات محصولات و پیمایش خودکار صفحات (Pagination)"""
 
-  def __init__(self, target_url):
-    self.target_url = target_url
+    BASE_URL = "https://books.toscrape.com/"
 
-  def fetch_data(self):
-    """این روش اطلاعات را از وب‌سایت هدف استخراج کرده و به صورت لیست برمی‌گرداند"""
-    try:
-      response = requests.get(self.target_url, timeout=10)
-      if response.status_code != 200:
-        print(f"خطا در دریافت اطلاعات. کد وضعیت: {response.status_code}")
-        return []
+    def __init__(self, fetcher: WebFetcher | None = None):
+        self.fetcher = fetcher or WebFetcher()
 
-      soup = BeautifulSoup(response.text, "html.parser")
-      scraped_data = []
+    def parse_products(self, html: str, page_url: str) -> list[dict]:
+        soup = BeautifulSoup(html, "html.parser")
+        products = []
 
-      # به عنوان نمونه، پست‌های تستی را از سایت JSONPlaceholder یا نمونه مشابه استخراج می‌کنیم
-      # در پروژه‌های واقعی می‌توانید سلکتورهای سایت مورد نظر خود را بنویسید
-      items = soup.find_all("tr")  # نمونه فرضی برای جدول
+        for item in soup.select("article.product_pod"):
+            title_tag = item.select_one("h3 a")
+            price_tag = item.select_one("p.price_color")
+            stock_tag = item.select_one("p.instock.availability")
+            rating_tag = item.select_one("p.star-rating")
 
-      # داده‌های تستی استاندارد برای پایه‌گذاری ربات
-      sample_data = [
-          {"title": "Python Programming", "price": 150, "category": "Books"},
-          {
-              "title": "Data Science Handbook",
-              "price": 250,
-              "category": "Books",
-          },
-          {"title": "Automation Testing Guide", "price": 200, "category": "QA"},
-          {"title": "Web Scraper Pro", "price": 300, "category": "Software"},
-      ]
+            title = title_tag["title"].strip() if title_tag and title_tag.has_attr("title") else "N/A"
+            relative_link = title_tag["href"] if title_tag and title_tag.has_attr("href") else ""
+            full_link = urljoin(page_url, relative_link)
+            raw_price = price_tag.get_text(strip=True) if price_tag else "0"
+            availability = stock_tag.get_text(strip=True) if stock_tag else "Unknown"
 
-      return sample_data
+            rating = "N/A"
+            if rating_tag and rating_tag.has_attr("class"):
+                classes = [c for c in rating_tag["class"] if c != "star-rating"]
+                rating = classes[0] if classes else "N/A"
 
-    except Exception as e:
-      print(f"خطا در هنگام اسکریپت: {e}")
-      return []
+            products.append({
+                "title": title,
+                "raw_price": raw_price,
+                "availability": availability,
+                "rating": rating,
+                "url": full_link,
+            })
 
+        return products
 
-if __name__ == "__main__":
-  scraper = DataScraper("https://example.com")
-  print(scraper.fetch_data())
+    def get_next_page_url(self, html: str, current_url: str) -> str | None:
+        soup = BeautifulSoup(html, "html.parser")
+        next_button = soup.select_one("li.next a")
+        if next_button and next_button.has_attr("href"):
+            return urljoin(current_url, next_button["href"])
+        return None
+
+    def scrape_pages(self, start_url: str = BASE_URL, max_pages: int = 3) -> list[dict]:
+        all_products = []
+        current_url = start_url
+        page_count = 0
+
+        while current_url and page_count < max_pages:
+            page_count += 1
+            logging.info(f"در حال پردازش صفحه {page_count} از حداکثر {max_pages}...")
+            html = self.fetcher.get_page(current_url)
+            if not html:
+                break
+
+            page_items = self.parse_products(html, current_url)
+            all_products.extend(page_items)
+            logging.info(f"{len(page_items)} محصول از صفحه {page_count} استخراج شد.")
+
+            current_url = self.get_next_page_url(html, current_url)
+
+        logging.info(f"استخراج به پایان رسید. مجموع محصولات: {len(all_products)}")
+        return all_products
