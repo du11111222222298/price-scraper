@@ -1,30 +1,34 @@
+import logging
+from src.scraper import ProductScraper
 from src.processor import DataProcessor
-from src.reporter import ExcelReporter
-from src.scraper import DataScraper
+from src.reporter import ReportGenerator
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 
-def main():
-  print("--- شروع فرآیند اتوماسیون داده ---")
+def run_pipeline(max_pages: int = 3) -> None:
+    logging.info("شروع فرآیند جامع استخراج و پردازش داده‌ها...")
 
-  # ۱. استخراج داده‌ها
-  target_url = "https://example.com"
-  scraper = DataScraper(target_url)
-  raw_data = scraper.fetch_data()
+    scraper = ProductScraper()
+    processor = DataProcessor()
+    reporter = ReportGenerator(output_dir="outputs")
 
-  if not raw_data:
-    print("هیچ داده‌ای دریافت نشد. عملیات متوقف شد.")
-    return
+    # ۱. استخراج داده‌ها از صفحات وب
+    raw_products = scraper.scrape_pages(max_pages=max_pages)
+    if not raw_products:
+        logging.error("هیچ محصولی استخراج نشد؛ فرآیند متوقف شد.")
+        return
 
-  # ۲. پردازش و تمیزکاری داده‌ها
-  processor = DataProcessor(raw_data)
-  processed_df = processor.clean_and_process()
+    # ۲. پاک‌سازی و استانداردسازی داده‌ها
+    cleaned_df = processor.clean_data(raw_products)
 
-  # ۳. تولید گزارش نهایی اکسل
-  reporter = ExcelReporter(processed_df)
-  reporter.generate_excel_report("products_report.xlsx")
-
-  print("--- اتوماسیون با موفقیت به پایان رسید ---")
+    # ۳. تولید گزارش‌های Excel و CSV
+    exported_files = reporter.export(cleaned_df, prefix="market_prices")
+    logging.info(f"فرآیند با موفقیت کامل شد. فایل‌های خروجی: {exported_files}")
 
 
 if __name__ == "__main__":
-  main()
+    run_pipeline(max_pages=3)
